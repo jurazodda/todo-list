@@ -1,183 +1,162 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
-	"github.com/fatih/color"
-	"log"
-	"os"
-	"strings"
-)
+	"net/http"
+	"strconv"
 
-var (
-	red    = color.New(color.FgRed).PrintfFunc()
-	green  = color.New(color.FgGreen).PrintfFunc()
-	yellow = color.New(color.FgYellow).PrintfFunc()
-	cyan   = color.New(color.FgCyan).PrintlnFunc()
+	"github.com/gin-gonic/gin"
 )
 
 type Task struct {
-	ID     int
-	Title  string
-	IsDone bool
+	ID     int    `json:"id"`
+	Title  string `json:"title"`
+	IsDone bool   `json:"is_done"`
 }
 
 var tasks []Task
 var nextID int = 1
 
-const (
-	StatusPending = "[-]"
-	StatusDone    = "[+]"
-)
-
 func main() {
-	cyan("\n__ Welcome to TODO CLI mini-app __")
-	for {
-		fmt.Println("1 - Create task.")
-		fmt.Println("2 - Show tasks.")
-		fmt.Println("3 - Show task by ID.")
-		fmt.Println("4 - Update task.")
-		fmt.Println("5 - Mark as completed.")
-		fmt.Println("6 - Delete task.")
-		fmt.Println("7 - Exit.")
-		fmt.Println()
-		fmt.Print("Choose a command: ")
+	router := gin.Default()
 
-		var userChoice int
-		fmt.Scan(&userChoice)
+	router.POST("/tasks", createTask)
+	router.GET("/tasks", getTasks)
+	router.GET("/tasks/:id", getTaskByID)
+	router.PATCH("/tasks/:id", updateTask)
+	router.PATCH("/tasks/:id/complete", completeTask)
+	router.DELETE("/tasks/:id", deleteTask)
 
-		switch userChoice {
-		case 1:
-			createTask()
-		case 2:
-			getTasks()
-		case 3:
-			getTaskByID()
-		case 4:
-			updateTask()
-		case 5:
-			completeTask()
-		case 6:
-			deleteTask()
-		case 7:
-			fmt.Println("Exiting...")
-			return
-		default:
-			fmt.Println("Invalid command.")
-			fmt.Println()
-			continue
-		}
-	}
+	router.Run(":8080")
 }
 
-func createTask() {
-	fmt.Print("Enter the task title: ")
-	reader := bufio.NewReader(os.Stdin)
-	title, err := reader.ReadString('\n')
+func createTask(c *gin.Context) {
+	input := struct {
+		Title string `json:"title"`
+	}{}
+
+	err := c.BindJSON(&input)
 	if err != nil {
-		log.Fatal(err)
-	}
-	title = strings.TrimSpace(title)
-	if title == "" {
-		red("Error: Task title cannot be empty\n")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
-	tasks = append(tasks, Task{ID: nextID, Title: title, IsDone: false})
+
+	task := Task{
+		ID:     nextID,
+		Title:  input.Title,
+		IsDone: false,
+	}
 	nextID++
 
-	green("Task created successfully!\n")
-	fmt.Println()
+	tasks = append(tasks, task)
+
+	c.JSON(http.StatusCreated, gin.H{"task": task})
 }
 
-func getTasks() {
-	for i := range tasks {
-		status := color.YellowString(StatusPending)
-		if tasks[i].IsDone {
-			status = color.GreenString(StatusDone)
-		}
-		fmt.Printf("%d. %s %s\n", tasks[i].ID, tasks[i].Title, status)
-	}
-
-	if len(tasks) == 0 {
-		yellow("No task to show\n")
-	}
-	fmt.Println()
+func getTasks(c *gin.Context) {
+	c.JSON(http.StatusOK, tasks)
 }
 
-func getTaskByID() {
-	fmt.Print("Enter the ID of the task you want to view: ")
-	var taskID int
-	fmt.Scan(&taskID)
+func getTaskByID(c *gin.Context) {
+	idStr := c.Param("id")
+	if idStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task id required"})
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed convert to int"})
+		return
+	}
+
 	for i := range tasks {
-		if tasks[i].ID == taskID {
-			status := color.YellowString(StatusPending)
-			if tasks[i].IsDone {
-				status = color.GreenString(StatusDone)
-			}
-			fmt.Printf("%d. %s %s\n", tasks[i].ID, tasks[i].Title, status)
-			fmt.Println()
+		if tasks[i].ID == id {
+			c.JSON(http.StatusOK, tasks[i])
 			return
 		}
 	}
 
-	red("Task not found\n")
-	fmt.Println()
+	c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
 }
 
-func updateTask() {
-	fmt.Print("Enter the ID of the task you want to update: ")
-	var taskID int
-	fmt.Scan(&taskID)
+func updateTask(c *gin.Context) {
+	idStr := c.Param("id")
+	if idStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task id required"})
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed convert to int"})
+		return
+	}
+
+	input := struct {
+		Title string `json:"title"`
+	}{}
+
+	err = c.BindJSON(&input)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
 	for i := range tasks {
-		if tasks[i].ID == taskID {
-			fmt.Print("Enter a new title: ")
-			reader := bufio.NewReader(os.Stdin)
-			title, err := reader.ReadString('\n')
-			if err != nil {
-				log.Fatal(err)
-			}
-			title = strings.TrimSpace(title)
-			tasks[i].Title = title
-			green("Task updated successfully!\n")
-			fmt.Println()
+		if tasks[i].ID == id {
+			tasks[i].Title = input.Title
+			c.JSON(http.StatusOK, gin.H{"message": "task updated"})
 			return
 		}
 	}
 
-	red("Task not found\n")
-	fmt.Println()
+	c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
 }
 
-func completeTask() {
-	fmt.Print("Enter the ID of the task you want to mark: ")
-	var taskID int
-	fmt.Scan(&taskID)
+func completeTask(c *gin.Context) {
+	idStr := c.Param("id")
+	if idStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task id required"})
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed convert to int"})
+		return
+	}
+
 	for i := range tasks {
-		if tasks[i].ID == taskID {
+		if tasks[i].ID == id {
 			tasks[i].IsDone = true
-			green("Task marked as completed!\n")
-			fmt.Println()
+			c.JSON(http.StatusOK, gin.H{"message": "task completed", "tasks": tasks[i]})
 			return
 		}
 	}
 
-	red("Task not found\n")
-	fmt.Println()
+	c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
 }
 
-func deleteTask() {
-	fmt.Print("Enter the ID of the task you want to delete: ")
-	var taskID int
-	fmt.Scan(&taskID)
+func deleteTask(c *gin.Context) {
+	idStr := c.Param("id")
+	if idStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task id required"})
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed convert to int"})
+		return
+	}
+
 	for i := range tasks {
-		if tasks[i].ID == taskID {
+		if tasks[i].ID == id {
 			tasks = append(tasks[:i], tasks[i+1:]...)
-			green("Task deleted successfully!\n")
-			fmt.Println()
+			c.JSON(http.StatusOK, gin.H{"message": "task deleted"})
 			return
 		}
 	}
 
-	red("Task not found\n")
-	fmt.Println()
+	c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
 }
