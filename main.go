@@ -5,18 +5,31 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
+var db *gorm.DB
+
 type Task struct {
-	ID     int    `json:"id"`
-	Title  string `json:"title"`
+	gorm.Model
+	Title  string `json:"title" gorm:"not null"`
 	IsDone bool   `json:"is_done"`
 }
 
-var tasks []Task
-var nextID int = 1
+func initDB() {
+	dsn := "host=localhost user=postgres password=postgres dbname=todo-list port=5433 sslmode=disable"
+	var err error
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		panic("failed to connect to database" + err.Error())
+	}
+
+	db.AutoMigrate(&Task{})
+}
 
 func main() {
+	initDB()
 	router := gin.Default()
 
 	router.POST("/tasks", createTask)
@@ -40,20 +53,16 @@ func createTask(c *gin.Context) {
 		return
 	}
 
-	task := Task{
-		ID:     nextID,
-		Title:  input.Title,
-		IsDone: false,
-	}
-	nextID++
-
-	tasks = append(tasks, task)
+	task := Task{Title: input.Title}
+	db.Create(&task)
 
 	c.JSON(http.StatusCreated, gin.H{"task": task})
 }
 
 func getTasks(c *gin.Context) {
-	c.JSON(http.StatusOK, tasks)
+	var tasks []Task
+	db.Find(&tasks)
+	c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 }
 
 func getTaskByID(c *gin.Context) {
@@ -69,14 +78,13 @@ func getTaskByID(c *gin.Context) {
 		return
 	}
 
-	for i := range tasks {
-		if tasks[i].ID == id {
-			c.JSON(http.StatusOK, tasks[i])
-			return
-		}
+	var task Task
+	if err := db.WithContext(c).First(&task, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
+		return
 	}
 
-	c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
+	c.JSON(http.StatusOK, task)
 }
 
 func updateTask(c *gin.Context) {
@@ -102,15 +110,16 @@ func updateTask(c *gin.Context) {
 		return
 	}
 
-	for i := range tasks {
-		if tasks[i].ID == id {
-			tasks[i].Title = input.Title
-			c.JSON(http.StatusOK, gin.H{"message": "task updated"})
-			return
-		}
+	var task Task
+	if err := db.WithContext(c).First(&task, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
+		return
 	}
 
-	c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
+	task.Title = input.Title
+	db.Save(&task)
+
+	c.JSON(http.StatusOK, task)
 }
 
 func completeTask(c *gin.Context) {
@@ -126,15 +135,16 @@ func completeTask(c *gin.Context) {
 		return
 	}
 
-	for i := range tasks {
-		if tasks[i].ID == id {
-			tasks[i].IsDone = true
-			c.JSON(http.StatusOK, gin.H{"message": "task completed", "tasks": tasks[i]})
-			return
-		}
+	var task Task
+	if err := db.WithContext(c).First(&task, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
+		return
 	}
 
-	c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
+	task.IsDone = true
+	db.Save(&task)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Task completed", "task": task})
 }
 
 func deleteTask(c *gin.Context) {
@@ -150,13 +160,11 @@ func deleteTask(c *gin.Context) {
 		return
 	}
 
-	for i := range tasks {
-		if tasks[i].ID == id {
-			tasks = append(tasks[:i], tasks[i+1:]...)
-			c.JSON(http.StatusOK, gin.H{"message": "task deleted"})
-			return
-		}
+	res := db.Delete(&Task{}, id)
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
+		return
 	}
 
-	c.JSON(http.StatusNotFound, gin.H{"message": "task not found"})
+	c.JSON(http.StatusOK, gin.H{"message": "Task deleted"})
 }
